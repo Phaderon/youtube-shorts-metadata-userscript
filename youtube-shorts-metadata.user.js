@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Shorts Metadata
 // @namespace    local.youtube.shorts.metadata
-// @version      0.1.0
+// @version      0.1.1
 // @description  Adds upload date and duration back onto YouTube Shorts cards in search, subscriptions, and grids.
 // @match        https://www.youtube.com/*
 // @match        https://youtube.com/*
@@ -29,12 +29,32 @@
   const pending = [];
   const inFlight = new Set();
   let scanTimer = 0;
+  let intervalScans = 0;
 
-  injectStyles();
-  scan();
-  observePage();
-  document.addEventListener("yt-navigate-finish", scheduleScan, true);
-  window.addEventListener("popstate", scheduleScan, true);
+  startWhenReady();
+
+  function startWhenReady() {
+    if (!document.documentElement || !document.body) {
+      window.setTimeout(startWhenReady, 100);
+      return;
+    }
+
+    injectStyles();
+    scan();
+    observePage();
+    window.setInterval(() => {
+      intervalScans += 1;
+      scan();
+      if (intervalScans === 1) {
+        console.info("[YouTube Shorts Metadata] active");
+      }
+    }, 2500);
+    document.addEventListener("yt-navigate-finish", scheduleScan, true);
+    document.addEventListener("yt-page-data-updated", scheduleScan, true);
+    document.addEventListener("yt-rendererstamper-finished", scheduleScan, true);
+    window.addEventListener("popstate", scheduleScan, true);
+    window.addEventListener("focus", scheduleScan, true);
+  }
 
   function observePage() {
     const observer = new MutationObserver(scheduleScan);
@@ -56,7 +76,7 @@
       if (!videoId) continue;
 
       const card = findCard(anchor);
-      if (!card || card.getAttribute(CARD_ATTR) === videoId) continue;
+      if (!card) continue;
 
       card.setAttribute(CARD_ATTR, videoId);
       card.classList.add(`${SCRIPT}-card`);
@@ -84,6 +104,7 @@
       "ytd-video-renderer",
       "ytd-reel-item-renderer",
       "ytd-grid-video-renderer",
+      "ytm-shorts-lockup-view-model-v2",
       "ytm-shorts-lockup-view-model",
       "yt-lockup-view-model",
       "ytm-rich-item-renderer",
@@ -117,18 +138,29 @@
       const line = document.createElement("div");
       line.className = `${SCRIPT}-line`;
       line.textContent = "Loading date...";
-      const target = findMetadataTarget(card, anchor);
-      target.appendChild(line);
+      placeMetadataLine(card, anchor, line);
     }
   }
 
   function findThumbnailBox(card, anchor) {
-    return anchor.querySelector("yt-image, img") ? anchor : (
+    return anchor.querySelector("yt-image, yt-thumbnail-view-model, img") ? anchor : (
       card.querySelector("a[href*='/shorts/'] yt-image")?.closest("a") ||
       card.querySelector("a[href*='/shorts/'] img")?.closest("a") ||
+      card.querySelector(".shortsLockupViewModelHostThumbnailParentContainer") ||
       card.querySelector("ytd-thumbnail, yt-thumbnail-view-model, .yt-thumbnail-view-model") ||
       anchor
     );
+  }
+
+  function placeMetadataLine(card, anchor, line) {
+    const subhead = card.querySelector(".shortsLockupViewModelHostOutsideMetadataSubhead, .shortsLockupViewModelHostMetadataSubhead");
+    if (subhead) {
+      subhead.insertAdjacentElement("afterend", line);
+      return;
+    }
+
+    const target = findMetadataTarget(card, anchor);
+    target.appendChild(line);
   }
 
   function findMetadataTarget(card, anchor) {
@@ -209,7 +241,8 @@
   }
 
   function renderEverywhere(videoId, meta) {
-    for (const card of document.querySelectorAll(`[${CARD_ATTR}="${CSS.escape(videoId)}"]`)) {
+    const escaped = window.CSS?.escape ? CSS.escape(videoId) : videoId.replace(/"/g, '\\"');
+    for (const card of document.querySelectorAll(`[${CARD_ATTR}="${escaped}"]`)) {
       render(card, meta);
     }
   }
@@ -349,7 +382,9 @@
       }
 
       ytd-video-renderer .${SCRIPT}-line,
-      ytd-rich-item-renderer .${SCRIPT}-line {
+      ytd-rich-item-renderer .${SCRIPT}-line,
+      ytm-shorts-lockup-view-model .${SCRIPT}-line,
+      ytm-shorts-lockup-view-model-v2 .${SCRIPT}-line {
         font-size: 13px;
         line-height: 18px;
       }

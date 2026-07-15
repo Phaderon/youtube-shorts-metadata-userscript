@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Shorts Metadata
 // @namespace    local.youtube.shorts.metadata
-// @version      0.1.1
+// @version      0.1.2
 // @description  Adds upload date and duration back onto YouTube Shorts cards in search, subscriptions, and grids.
 // @match        https://www.youtube.com/*
 // @match        https://youtube.com/*
@@ -70,12 +70,16 @@
   }
 
   function scan() {
-    const anchors = Array.from(document.querySelectorAll('a[href*="/shorts/"]'));
+    const anchors = Array.from(document.querySelectorAll([
+      'a[href*="/shorts/"]',
+      'ytm-shorts-lockup-view-model a[href*="/watch"]',
+      'ytm-shorts-lockup-view-model-v2 a[href*="/watch"]',
+      '.shortsLockupViewModelHost a[href*="/watch"]',
+    ].join(",")));
     for (const anchor of anchors) {
-      const videoId = getShortId(anchor.href || anchor.getAttribute("href"));
-      if (!videoId) continue;
-
       const card = findCard(anchor);
+      const videoId = getVideoId(anchor.href || anchor.getAttribute("href")) || getVideoIdFromCard(card);
+      if (!videoId) continue;
       if (!card) continue;
 
       card.setAttribute(CARD_ATTR, videoId);
@@ -92,9 +96,27 @@
     }
   }
 
-  function getShortId(href) {
+  function getVideoId(href) {
     if (!href) return "";
-    const match = String(href).match(/\/shorts\/([A-Za-z0-9_-]{6,})/);
+    const text = String(href);
+    const shortMatch = text.match(/\/shorts\/([A-Za-z0-9_-]{6,})/);
+    if (shortMatch) return shortMatch[1];
+
+    try {
+      const url = new URL(text, location.origin);
+      if (url.pathname === "/watch") return url.searchParams.get("v") || "";
+    } catch (_) {
+      const watchMatch = text.match(/[?&]v=([A-Za-z0-9_-]{6,})/);
+      if (watchMatch) return watchMatch[1];
+    }
+    return "";
+  }
+
+  function getVideoIdFromCard(card) {
+    if (!card) return "";
+    const image = card.querySelector('img[src*="/vi/"], img[src*="/vi_webp/"]');
+    const src = image?.currentSrc || image?.src || "";
+    const match = src.match(/\/vi(?:_webp)?\/([A-Za-z0-9_-]{6,})\//);
     return match ? match[1] : "";
   }
 
@@ -146,6 +168,8 @@
     return anchor.querySelector("yt-image, yt-thumbnail-view-model, img") ? anchor : (
       card.querySelector("a[href*='/shorts/'] yt-image")?.closest("a") ||
       card.querySelector("a[href*='/shorts/'] img")?.closest("a") ||
+      card.querySelector("a[href*='/watch'] yt-image")?.closest("a") ||
+      card.querySelector("a[href*='/watch'] img")?.closest("a") ||
       card.querySelector(".shortsLockupViewModelHostThumbnailParentContainer") ||
       card.querySelector("ytd-thumbnail, yt-thumbnail-view-model, .yt-thumbnail-view-model") ||
       anchor
@@ -248,8 +272,8 @@
   }
 
   function render(card, meta) {
-    const duration = card.querySelector(`.${SCRIPT}-duration`);
-    if (duration) {
+    const durations = card.querySelectorAll(`.${SCRIPT}-duration`);
+    for (const duration of durations) {
       duration.textContent = meta.durationText || "?";
       duration.title = "Short duration";
     }
